@@ -80,16 +80,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             // Check if fall value is greater than ADL value
             if (fallValue > adlValue) {
                 // Trigger voice prompt here
-                Log.d("*******","************************")
-                Log.d("VoiceTrigger", "A fall has occured")
-                Log.d("*******","************************")
-                speak("Fall detected")
+                speak("Fall")
             }
         }
     }
 
     private fun speak(text: String) {
-        textToSpeech.speak(text, TextToSpeech.QUEUE_ADD, null, null)
+        textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
     }
 
 
