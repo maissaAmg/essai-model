@@ -1,9 +1,9 @@
 package com.codingwithmitch.essaimodel
 
 import android.app.Service
-import android.app.Service.START_STICKY
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -19,161 +19,246 @@ import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import kotlin.math.*
 
-
-// Classe principale pour le service d'inférence qui utilise les données du capteur.
+// Service pour gérer l'inférence du modèle TensorFlow Lite avec les données des capteurs.
 class InferenceService : Service(), SensorEventListener {
 
-    // Déclarations et initialisations des variables.
-    private lateinit var interpreter: Interpreter  // L'interpréteur pour le modèle TensorFlow Lite.
-    private lateinit var sensorManager: SensorManager  // Gère les capteurs du dispositif.
-    private var accelerometerSensor: Sensor? = null  // Capteur d'accéléromètre.
-    private val accelerometerData = mutableListOf<FloatArray>()  // Stocke les données de l'accéléromètre.
-    private var collectionStartTime: Long = 0  // Marque le début de la collecte des données.
-    // Constantes pour la normalisation des données.
-    private val MEANS = floatArrayOf(-0.00587745f, -0.60819228f, -0.09736887f)
-    private val STANDARD_DEVIATIONS = floatArrayOf(0.40432001f, 0.66772087f, 0.4787974f)
+    // Déclarations de variables
+    private lateinit var interpreter: Interpreter // Interpréteur TensorFlow Lite.
+    private lateinit var sensorManager: SensorManager // Gestionnaire de capteurs.
+    private var accelerometerSensor: Sensor? = null // Capteur d'accéléromètre.
+    private val accelerometerData = mutableListOf<FloatArray>() // Liste des données de l'accéléromètre.
 
-    // Liaison du service, généralement non utilisée dans ce contexte.
+    // Méthode appelée lors de la liaison du service (non utilisée ici).
     override fun onBind(intent: Intent): IBinder? {
         return null
     }
 
-
-    // Initialisation lors de la création du service.
+    // Méthode appelée lors de la création du service.
     override fun onCreate() {
         super.onCreate()
-        initTFLiteInterpreter() // Initialisation de l'interpréteur TensorFlow Lite.
-        // Configuration et enregistrement du capteur d'accéléromètre.
+        Log.d("InferenceService", "Service created")
+        initTFLiteInterpreter() // Initialiser l'interpréteur TensorFlow Lite.
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accelerometerSensor, SensorManager.SENSOR_DELAY_FASTEST)
     }
 
-    // Démarrage du service.
+    // Méthode appelée lors du démarrage du service.
     override fun onStartCommand(intent: Intent, flags: Int, startId: Int): Int {
-        // Le service est démarré et s'exécutera en arrière-plan.
+        Log.d("InferenceService", "Service started")
         return START_STICKY
     }
 
-    // Gestion des changements de données du capteur.
+    // Méthode appelée lorsque les données du capteur changent.
     override fun onSensorChanged(event: SensorEvent) {
-        // Traite uniquement les données de l'accéléromètre
         if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            // Logique de collecte et traitement des données.
-            val currentTime = System.currentTimeMillis()
-
-            if (accelerometerData.isEmpty()) {
-                collectionStartTime = currentTime
-            }
-
-            if (currentTime - collectionStartTime < 1000) {
-                val standardizedValues = standardizeValues(event.values)
-                accelerometerData.add(standardizedValues)
-            } else {
-                // Exécution de l'inférence du modèle et gestion du cycle de vie des données.
-                Log.d("SensorDataCollection", "1 second passed, processing data")
+            Log.d("SensorEvent", "Accelerometer data received: ${event.values.contentToString()}")
+            accelerometerData.add(event.values.copyOf())
+            if (accelerometerData.size >= 200) {
+                Log.d("SensorEvent", "Collected 200 data points")
                 val sampledData = sampleData(accelerometerData)
                 val byteBufferSensor = createByteBufferFromSampledData(sampledData)
                 runModelInference(byteBufferSensor)
-
                 accelerometerData.clear()
-                collectionStartTime = currentTime
-                Log.d("SensorDataCollection", "Data buffer cleared for next collection")
+                Log.d("SensorEvent", "Accelerometer data cleared")
             }
         }
     }
 
     // Méthode pour exécuter l'inférence du modèle.
     private fun runModelInference(byteBuffer: ByteBuffer) {
-        // Préparation et exécution de l'inférence.
         Log.d("ModelInference", "Running model inference")
-        val inputFeature0 = TensorBuffer.createFixedSize(intArrayOf(1, 50, 3), DataType.FLOAT32)
+        val inputFeature0 = TensorBuffer.createFixedSize(intArrayOf(1, 200, 58), DataType.FLOAT32)
         inputFeature0.loadBuffer(byteBuffer)
 
-        val outputs = mutableMapOf<Int, Any>()
         val outputFeature0 = TensorBuffer.createFixedSize(intArrayOf(1, 2), DataType.FLOAT32)
-        outputs[0] = outputFeature0.buffer
+        interpreter.run(inputFeature0.buffer, outputFeature0.buffer)
 
-        interpreter.runForMultipleInputsOutputs(arrayOf(inputFeature0.buffer), outputs)
         val result = outputFeature0.floatArray
-        sendInferenceResults(result) //envoyer les données
-        Log.d("ModelInference", "Model inference complete. Result: ${result.contentToString()}")
-
+        Log.d("ModelInference", "Inference result: ${result.contentToString()}")
+        sendInferenceResults(result)
     }
 
-    // Échantillonnage des données collectées.
-    private fun sampleData(data: MutableList<FloatArray>): List<FloatArray> {
-        val interval = data.size / 50
-        return data.filterIndexed { index, _ -> index % interval == 0 }.take(50)
+    // Méthode pour échantillonner les données collectées.
+    private fun sampleData(data: List<FloatArray>): List<FloatArray> {
+        Log.d("SampleData", "Sampling data")
+        return data.take(200)
     }
 
-    // Normalisation des valeurs des données.
-    private fun standardizeValues(values: FloatArray): FloatArray {
+    // Méthode pour normaliser les données.
+    private fun normalizeData(data: FloatArray): FloatArray {
+        Log.d("NormalizeData", "Normalizing data: ${data.contentToString()}")
+        val means = floatArrayOf(-0.2455672f, 7.21737844f, 1.3798924f)
+        val stdDevs = floatArrayOf(4.06080787f, 5.21834111f, 4.21955204f)
         return floatArrayOf(
-            (values[0] - MEANS[0]) / STANDARD_DEVIATIONS[0],
-            (values[1] - MEANS[1]) / STANDARD_DEVIATIONS[1],
-            (values[2] - MEANS[2]) / STANDARD_DEVIATIONS[2]
-        )
+            (data[0] - means[0]) / stdDevs[0],
+            (data[1] - means[1]) / stdDevs[1],
+            (data[2] - means[2]) / stdDevs[2]
+        ).also { Log.d("NormalizeData", "Normalized data: ${it.contentToString()}") }
     }
 
-    // Création d'un ByteBuffer à partir des données échantillonnées.
-    private fun createByteBufferFromSampledData(sampledData: List<FloatArray>): ByteBuffer {
-        val numSamples = 50
-        val numFeatures = 3
-        val bytesPerFloat = 4
+    // Méthode pour calculer les caractéristiques des données.
+    private fun calculateFeatures(window: List<FloatArray>): FloatArray {
+        Log.d("CalculateFeatures", "Calculating features for data window")
+        val features = FloatArray(58)
+        val magnitude = window.map { sqrt(it[0] * it[0] + it[1] * it[1] + it[2] * it[2]) }
+        val theta = window.map { atan2(it[1], it[0]) }
 
-        val byteBuffer = ByteBuffer.allocateDirect(numSamples * numFeatures * bytesPerFloat)
-        byteBuffer.order(ByteOrder.nativeOrder())
-
-        sampledData.forEach { dataPoint ->
-            byteBuffer.putFloat(dataPoint[0])
-            byteBuffer.putFloat(dataPoint[1])
-            byteBuffer.putFloat(dataPoint[2])
+        for ((i, sample) in window.withIndex()) {
+            val absValues = sample.map { abs(it) }.toFloatArray()
+            if (i * 3 + 3 <= features.size) {
+                System.arraycopy(absValues, 0, features, i * 3, 3)
+            }
         }
 
-        Log.d("ByteBuffer", "ByteBuffer created from sampled data")
+        val xValues = window.map { it[0] }
+        val yValues = window.map { it[1] }
+        val zValues = window.map { it[2] }
+        val axes = listOf(xValues, yValues, zValues)
+
+        for ((axisIndex, axis) in axes.withIndex()) {
+            val baseIndex = 9 + axisIndex * 14
+            features[baseIndex] = axis.mean()
+            features[baseIndex + 1] = axis.absMean()
+            features[baseIndex + 2] = axis.median()
+            features[baseIndex + 3] = axis.absMedian()
+            features[baseIndex + 4] = axis.std()
+            features[baseIndex + 5] = axis.map { abs(it) }.std()
+            features[baseIndex + 6] = axis.skew()
+            features[baseIndex + 7] = axis.map { abs(it) }.skew()
+            features[baseIndex + 8] = axis.kurtosis()
+            features[baseIndex + 9] = axis.map { abs(it) }.kurtosis()
+            features[baseIndex + 10] = axis.minOrNull() ?: 0f
+            features[baseIndex + 11] = axis.map { abs(it) }.minOrNull() ?: 0f
+            features[baseIndex + 12] = axis.maxOrNull() ?: 0f
+            features[baseIndex + 13] = axis.map { abs(it) }.maxOrNull() ?: 0f
+        }
+
+        features[51] = magnitude.mean()
+        features[52] = magnitude.std()
+        features[53] = theta.mean()
+        features[54] = theta.std()
+        features[55] = theta.skew()
+        features[56] = theta.kurtosis()
+        features[57] = magnitude.maxOrNull()?.minus(magnitude.minOrNull() ?: 0f) ?: 0f
+
+        Log.d("CalculateFeatures", "Calculated features: ${features.contentToString()}")
+        return features
+    }
+
+    // Méthode pour créer un ByteBuffer à partir des données échantillonnées.
+    private fun createByteBufferFromSampledData(sampledData: List<FloatArray>): ByteBuffer {
+        Log.d("CreateByteBuffer", "Creating ByteBuffer from sampled data")
+        val windowFeatures = sampledData.map { normalizeData(it) }
+        val features = calculateFeatures(windowFeatures)
+
+        val byteBuffer = ByteBuffer.allocateDirect(200 * 58 * 4)
+        byteBuffer.order(ByteOrder.nativeOrder())
+        features.forEach { byteBuffer.putFloat(it) }
+        Log.d("CreateByteBuffer", "ByteBuffer created: ${byteBufferToString(byteBuffer)}")
         return byteBuffer
     }
 
-    // Initialisation de l'interpréteur TensorFlow Lite.
-    private fun initTFLiteInterpreter() {
-        val modelByteBuffer = loadModelFile("lstm0_model_50.tflite")
-        val options = Interpreter.Options().addDelegate(FlexDelegate())
-        interpreter = Interpreter(modelByteBuffer, options)
-        Log.d("TFLite", "TensorFlow Lite Interpreter initialized")
+    // Méthode pour convertir un ByteBuffer en chaîne de caractères (pour les logs).
+    private fun byteBufferToString(buffer: ByteBuffer): String {
+        buffer.rewind()
+        val floats = FloatArray(buffer.remaining() / 4)
+        buffer.asFloatBuffer().get(floats)
+        return floats.joinToString(prefix = "[", postfix = "]", separator = ", ")
     }
 
-    // Chargement du fichier modèle TensorFlow Lite.
-    private fun loadModelFile(modelName: String): ByteBuffer {
-        val fileDescriptor = assets.openFd(modelName)
-        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        val startOffset = fileDescriptor.startOffset
-        val declaredLength = fileDescriptor.declaredLength
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength).also {
-            Log.d("LoadModel", "Model file loaded successfully")
+    // Méthode pour initialiser l'interpréteur TensorFlow Lite.
+    private fun initTFLiteInterpreter() {
+        try {
+            val modelByteBuffer = loadModelFile("cnn_lstm_exp2.tflite")
+            val options = Interpreter.Options().addDelegate(FlexDelegate())
+            interpreter = Interpreter(modelByteBuffer, options)
+            Log.d("TFLite", "TensorFlow Lite Interpreter initialized successfully")
+        } catch (e: Exception) {
+            Log.e("TFLite", "Error initializing TensorFlow Lite Interpreter", e)
         }
     }
 
-    // Gestion des changements de précision du capteur (peut rester vide si non nécessaire).
-    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {
+    // Méthode pour charger le fichier du modèle.
+    private fun loadModelFile(modelName: String): ByteBuffer {
+        return try {
+            val fileDescriptor = assets.openFd(modelName)
+            val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
+            val fileChannel = inputStream.channel
+            val startOffset = fileDescriptor.startOffset
+            val declaredLength = fileDescriptor.declaredLength
+            Log.d("LoadModel", "Model file start offset: $startOffset, declared length: $declaredLength")
+            fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength).also {
+                Log.d("LoadModel", "Model file loaded successfully: $modelName")
+            }
+        } catch (e: Exception) {
+            Log.e("LoadModel", "Error loading model file: $modelName", e)
+            throw e
+        }
     }
 
-    // Envoi des résultats de l'inférence.
+    // Méthode appelée lorsque la précision du capteur change (non utilisée ici).
+    override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+
+    // Méthode pour envoyer les résultats de l'inférence.
     private fun sendInferenceResults(result: FloatArray) {
-        Intent("INFERENCESERVICE_RESULT").apply {
+        Intent("com.codingwithmitch.essaimodel.INFERENCE_RESULT").apply {
             putExtra("result", result)
             LocalBroadcastManager.getInstance(this@InferenceService).sendBroadcast(this)
+            Log.d("SendInferenceResults", "Inference results sent: ${result.contentToString()}")
         }
     }
 
-    // Nettoyage lors de la destruction du service.
+    // Méthode appelée lorsque le service est détruit.
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
         interpreter.close()
         super.onDestroy()
-        Log.d("MainActivity", "Resources released and Activity destroyed")
+        Log.d("InferenceService", "Service destroyed")
     }
 
+    companion object {
+        // Méthode pour lier le service.
+        fun bindService(context: Context, connection: ServiceConnection) {
+            val intent = Intent(context, InferenceService::class.java)
+            context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            Log.d("BindService", "Service bound")
+        }
+
+        // Méthode pour délier le service.
+        fun unbindService(context: Context, connection: ServiceConnection) {
+            context.unbindService(connection)
+            Log.d("UnbindService", "Service unbound")
+        }
+    }
+}
+
+// Fonctions d'extension pour List<Float>
+fun List<Float>.mean() = this.sum() / this.size
+fun List<Float>.std() = sqrt(this.map { (it - this.mean()).pow(2) }.sum() / this.size)
+fun List<Float>.absMean() = this.map { abs(it) }.mean()
+fun List<Float>.median(): Float {
+    val sorted = this.sorted()
+    return if (sorted.size % 2 == 0) {
+        (sorted[sorted.size / 2] + sorted[sorted.size / 2 - 1]) / 2
+    } else {
+        sorted[sorted.size / 2]
+    }
+}
+fun List<Float>.absMedian() = this.map { abs(it) }.median()
+fun List<Float>.skew(): Float {
+    val mean = this.mean()
+    val n = this.size
+    val m3 = this.sumByDouble { ((it - mean).pow(3)).toDouble() } / n
+    val m2 = this.sumByDouble { ((it - mean).pow(2)).toDouble() } / n
+    return (m3 / m2.pow(1.5)).toFloat()
+}
+fun List<Float>.kurtosis(): Float {
+    val mean = this.mean()
+    val n = this.size
+    val m4 = this.sumByDouble { ((it - mean).pow(4)).toDouble() } / n
+    val m2 = this.sumByDouble { ((it - mean).pow(2)).toDouble() } / n
+    return (m4 / m2.pow(2)).toFloat()
 }
