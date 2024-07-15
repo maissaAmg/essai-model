@@ -44,6 +44,9 @@ dependencies {
     implementation 'org.tensorflow:tensorflow-lite-support:+'
     implementation 'org.tensorflow:tensorflow-lite-metadata:+'
     implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:+'
+
+    implementation 'org.apache.commons:commons-math3:3.6.1'
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
