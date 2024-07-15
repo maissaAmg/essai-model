@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts.setLanguage(Locale.FRENCH)
+            val result = tts.setLanguage(Locale.ENGLISH)
             isTtsInitialized = result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED
             if (!isTtsInitialized) {
                 Log.e("MainActivity", "TextToSpeech language is not supported")
@@ -123,8 +123,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
 
         if (result == "falling" && modelOutput[maxIndex] > modelOutput.maxOrNull() ?: 0f) {
             if (isTtsInitialized) {
-                Log.d("MainActivity", "Speaking 'chute'")
-                tts.speak("chute", TextToSpeech.QUEUE_FLUSH, null, null)
+                Log.d("MainActivity", "Speaking 'fall'")
+                tts.speak("fall", TextToSpeech.QUEUE_FLUSH, null, null)
             } else {
                 Log.e("MainActivity", "TextToSpeech not initialized")
             }
@@ -149,14 +149,14 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
 
     data class Window(val accX: List<Float>, val accY: List<Float>, val accZ: List<Float>)
 
-    fun normalizeWindow(window: Window, meanX: Float, meanY: Float, meanZ: Float, stdX: Float, stdY: Float, stdZ: Float): Window {
+    private fun normalizeWindow(window: Window, meanX: Float, meanY: Float, meanZ: Float, stdX: Float, stdY: Float, stdZ: Float): Window {
         val normalizedAccX = window.accX.map { (it - meanX) / stdX }.map { if (it.isNaN()) 0f else it }
         val normalizedAccY = window.accY.map { (it - meanY) / stdY }.map { if (it.isNaN()) 0f else it }
         val normalizedAccZ = window.accZ.map { (it - meanZ) / stdZ }.map { if (it.isNaN()) 0f else it }
         return Window(normalizedAccX, normalizedAccY, normalizedAccZ)
     }
 
-    fun calculateFeatures(window: Window): Map<String, Float> {
+    private fun calculateFeatures(window: Window): Map<String, Float> {
         val features = mutableMapOf<String, Float>()
 
         val magnitude = window.accX.zip(window.accY).zip(window.accZ) { (x, y), z ->
@@ -220,7 +220,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
         return features
     }
 
-    fun safeEvaluate(stat: Any, data: List<Float>): Float {
+    private fun safeEvaluate(stat: Any, data: List<Float>): Float {
         return try {
             when (stat) {
                 is Median -> stat.evaluate(data.map { it.toDouble() }.toDoubleArray()).toFloat()
@@ -234,7 +234,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
         }
     }
 
-    fun calculateSlope(time: List<Float>, axis: List<Float>): Float {
+    private fun calculateSlope(time: List<Float>, axis: List<Float>): Float {
         val validTime = time.map { if (it.isNaN()) 0f else it }
         val validAxis = axis.map { if (it.isNaN()) 0f else it }
 
@@ -247,7 +247,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
         return if (denominator != 0.0) (numerator / denominator).toFloat() else 0f
     }
 
-    fun calculateFeatureMatrix(window: Window, features: Map<String, Float>, windowSize: Int = 200): Array<FloatArray> {
+    private fun calculateFeatureMatrix(window: Window, features: Map<String, Float>, windowSize: Int = 200): Array<FloatArray> {
         val featureMatrix = Array(windowSize) { FloatArray(features.size + 3) }
 
         // Fill first three columns with absolute values of the data points
@@ -267,7 +267,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
         return featureMatrix
     }
 
-    fun runModelInference(featureMatrix: Array<FloatArray>): FloatArray {
+    private fun runModelInference(featureMatrix: Array<FloatArray>): FloatArray {
         try {
             val model = CnnLstmExp1.newInstance(this)
 
