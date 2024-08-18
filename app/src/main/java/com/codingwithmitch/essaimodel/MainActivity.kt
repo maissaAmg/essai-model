@@ -8,7 +8,7 @@ import android.hardware.SensorManager
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import com.codingwithmitch.essaimodel.ml.CnnLstmExp1
+import com.codingwithmitch.essaimodel.ml.CnnLstmExp1Allclasses
 import org.apache.commons.math3.stat.descriptive.moment.Kurtosis
 import org.apache.commons.math3.stat.descriptive.moment.Skewness
 import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation
@@ -115,13 +115,13 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
     }
 
     private fun handleModelOutput(modelOutput: FloatArray) {
-        val classes = arrayOf("standing", "lying", "falling")
+        val classes = arrayOf("BSC", "CHU", "CSI", "CSO", "FKL", "FOL", "JOG", "JUM", "LYI", "SCH", "SDL", "SIT", "STD", "STN", "STU", "WAL")
         val maxIndex = modelOutput.indices.maxByOrNull { modelOutput[it] } ?: -1
         val result = if (maxIndex != -1) classes[maxIndex] else "unknown"
 
         Log.d("MainActivity", "Predicted activity: $result")
 
-        if (result == "falling" && modelOutput[maxIndex] > modelOutput.maxOrNull() ?: 0f) {
+        if (result in arrayOf("FOL", "FKL", "BSC", "SDL")) {
             if (isTtsInitialized) {
                 Log.d("MainActivity", "Speaking 'fall'")
                 tts.speak("fall", TextToSpeech.QUEUE_FLUSH, null, null)
@@ -269,7 +269,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener, TextToSpeech.OnIn
 
     private fun runModelInference(featureMatrix: Array<FloatArray>): FloatArray {
         try {
-            val model = CnnLstmExp1.newInstance(this)
+            val model = CnnLstmExp1Allclasses.newInstance(this)
 
             // Prepare the input buffer
             val byteBuffer = ByteBuffer.allocateDirect(4 * windowSize * featureMatrix[0].size)
